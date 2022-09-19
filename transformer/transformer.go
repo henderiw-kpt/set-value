@@ -2,7 +2,6 @@ package transformer
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/GoogleContainerTools/kpt-functions-sdk/go/fn"
 	"sigs.k8s.io/kustomize/api/types"
@@ -79,33 +78,41 @@ func (t *SetValue) Transform(rl *fn.ResourceList) {
 			rl.Results = append(rl.Results, fn.ErrorConfigObjectResult(err, rl.FunctionConfig))
 		}
 
-		for _, target := range sv.Targets {
+		for _, selector := range sv.Targets {
+			if selector.Select == nil {
+				rl.Results = append(rl.Results, fn.ErrorConfigObjectResult(fmt.Errorf("target must specify a resource to select"), rl.FunctionConfig))
+			}
+			if len(selector.FieldPaths) == 0 {
+				rl.Results = append(rl.Results, fn.ErrorConfigObjectResult(fmt.Errorf("no fieldPaths selected"), rl.FunctionConfig))
+			}
 			for i, o := range rl.Items {
-				if target.Select.Kind == o.GetKind() && target.Select.Name == o.GetName() {
-					node, err := yaml.Parse(o.String())
-					if err != nil {
-						rl.Results = append(rl.Results, fn.ErrorConfigObjectResult(err, o))
-					}
+				node, err := yaml.Parse(o.String())
+				if err != nil {
+					rl.Results = append(rl.Results, fn.ErrorConfigObjectResult(err, o))
+				}
+				ids, err := MakeResIds(node)
+				if err != nil {
+					rl.Results = append(rl.Results, fn.ErrorConfigObjectResult(err, o))
+				}
 
-					// per fieldPath apply the replacement
-					for _, fieldPath := range target.FieldPaths {
-						_, err = node.Pipe(
-							yaml.LookupCreate(yaml.SequenceNode, strings.Split(fieldPath, ".")...),
-							yaml.Append(data.YNode().Content...),
-						)
+				// filter targetss by matching resource IDs
+				for _, id := range ids {
+					if id.IsSelectedBy(selector.Select.ResId) {
+						err := CopyValueToTarget(node, data, selector)
 						if err != nil {
 							rl.Results = append(rl.Results, fn.ErrorConfigObjectResult(err, o))
 						}
+						str, err := node.String()
+						if err != nil {
+							rl.Results = append(rl.Results, fn.ErrorConfigObjectResult(err, o))
+						}
+						newObj, err := fn.ParseKubeObject([]byte(str))
+						if err != nil {
+							rl.Results = append(rl.Results, fn.ErrorConfigObjectResult(err, o))
+						}
+						rl.Items[i] = newObj
+						break
 					}
-					str, err := node.String()
-					if err != nil {
-						rl.Results = append(rl.Results, fn.ErrorConfigObjectResult(err, o))
-					}
-					newObj, err := fn.ParseKubeObject([]byte(str))
-					if err != nil {
-						rl.Results = append(rl.Results, fn.ErrorConfigObjectResult(err, o))
-					}
-					rl.Items[i] = newObj
 				}
 			}
 		}
