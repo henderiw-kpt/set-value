@@ -73,29 +73,34 @@ func (t *SetValue) config(fc *fn.KubeObject) error {
 
 func (t *SetValue) Transform(rl *fn.ResourceList) {
 	for _, sv := range t.Spec {
+		// parse the input data so we can use it later when a resource is selected
 		data, err := yaml.Parse(sv.Data)
 		if err != nil {
 			rl.Results = append(rl.Results, fn.ErrorConfigObjectResult(err, rl.FunctionConfig))
 		}
 
 		for _, selector := range sv.Targets {
+			// input validation
 			if selector.Select == nil {
 				rl.Results = append(rl.Results, fn.ErrorConfigObjectResult(fmt.Errorf("target must specify a resource to select"), rl.FunctionConfig))
 			}
 			if len(selector.FieldPaths) == 0 {
 				rl.Results = append(rl.Results, fn.ErrorConfigObjectResult(fmt.Errorf("no fieldPaths selected"), rl.FunctionConfig))
 			}
+			// run over the resources
 			for i, o := range rl.Items {
+				// parse the node using kyaml
 				node, err := yaml.Parse(o.String())
 				if err != nil {
 					rl.Results = append(rl.Results, fn.ErrorConfigObjectResult(err, o))
 				}
+				// provide a resource id based on GVKNNS
 				ids, err := MakeResIds(node)
 				if err != nil {
 					rl.Results = append(rl.Results, fn.ErrorConfigObjectResult(err, o))
 				}
 
-				// filter targetss by matching resource IDs
+				// filter targets by matching resource IDs
 				for _, id := range ids {
 					if id.IsSelectedBy(selector.Select.ResId) {
 						err := CopyValueToTarget(node, data, selector)
